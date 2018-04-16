@@ -328,14 +328,14 @@ do_restart_network() {
       killall wpa_supplicant
    fi
 
-   if [ -x /etc/resolv.conf.dmz ]; then
+   if [ -e /etc/resolv.conf.dmz ]; then
       cp /etc/resolv.conf.dmz /etc/resolv.conf
    fi
 
    systemctl daemon-reload
    systemctl restart networking.service
 
-   if [ -x /etc/resolv.conf.dmz ]; then
+   if [ -e /etc/resolv.conf.dmz ]; then
       cp /etc/resolv.conf.dmz /etc/resolv.conf
    fi
 
@@ -368,8 +368,11 @@ do_configure_dhcp_server() {
 }
 
 do_install_guacamnole() {
-   add-apt-repository ppa:guacamole/stable
-   apt-get -y install guacamole-tomcat
+   # apt-get install software-properties-common python-software-properties
+   # add-apt-repository ppa:guacamole/stable
+   # apt-get update
+   
+   apt-get -y install guacamole
    apt-get -y install libguac-client-ssh0 libguac-client-rdp0
    
    chkconfig tomcat6 on
@@ -393,5 +396,26 @@ do_guac_ssh (){
 }
 
 do_guac_serial (){
-   echo "Configuring guacamole for ssh"
+   echo "Configuring guacamole for serial connection"
+   echo "hahaha - not yet."
+}
+
+do_suth_setup_local() {
+   echo "Not yet written"
+}
+
+do_auth_setup_kerberos() {
+   echo "Not yet written"
+}
+
+do_auth_setup_shib() {
+   echo "Not yet written"
+}
+
+do_auth_setup_cas() {
+   echo "Not yet written"
+}
+
+do_auth_setup_openid() {
+   echo "Not yet written"
 }

@@ -35,9 +35,9 @@ INTERFACES_FILE="/etc/network/interfaces"
 #
 whiptail --title "Science Mini-DMZ Device Setup" --msgbox "\
 This script will install the Mini-DMZ setup. The Mini-DMZ can \
-be used allow remote console access to stranded scientific \
-instruments that you would not normally be able to connect \
-to your campus network.\n\n\
+be used to provide remote console access to stranded \
+scientific instruments that you would not normally be able to \
+connect to your campus network.\n\n\
 The stranded instrument will attach to the ethernet port \
 built into the the Raspberry Pi, and the Raspberry Pi \
 will connect to the campus network either thru it's \
@@ -122,26 +122,48 @@ do_install_guacamnole
 # Setup authentication
 clear
 echo "Authentication setup would occur at this point."
-echo "(I still need to write this piece)"
+AUTH_CHOICE=$(whiptail --title "Authentication Setup" --radiolist \
+"What authentication mechanism would you like to use to control acess to this Mini-DMZ device?" 20 70 5 \
+# "local"    "Local PAM Access" off \
+# "kerberos" "kerberos" off \
+"SAML"     "SAML/Shibboleth" on \
+"CAS"      "Central Authenitcation Service (CAS)" off \
+# "openID"   "openID provider" off  \
+3>&1 1>&2 2>&3 )
+
+case $AUTH_CHOICE in
+"local")	do_suth_setup_local
+;;
+"kerberos") do_auth_setup_kerberos
+;;
+"SAML") do_auth_setup_shib
+;;
+"CAS") do_auth_setup_cas
+;;
+"openID") do_auth_setup_openid
+;;
+esac
+
 sleep 2
 
 # Configure Guacamole
 clear
 echo "Configuring Guacamole server . . ."
-GUAC_CONNECT_TYPE=$(whiptail --title "Connect to Instrument" --radiolist "How do you connect to the instrument:"  20 78 15 \
-"RDP" "" on \
-"VNC" "" off \
-"SSH" "" off \
-"serial" "" 3>&1 1>&2 2>&3 )
+GUAC_CONNECT_TYPE=$(whiptail --title "Connect to Instrument" --radiolist "How do you connect to the instrument:"  20 70 4 \
+"RDP" "Windows Remote Desktop" on \
+"VNC" "Virtual Network Computing (VNC)" off \
+"SSH" "ssh terminal" off \
+# "serial" "RS-232 Terminal" off \
+3>&1 1>&2 2>&3 )
 
 case $GUAC_CONNECT_TYPE in
-RDP) do_guac_rdp
+"RDP") do_guac_rdp
 ;;
-VNC) do_guac_vnc
+"VNC") do_guac_vnc
 ;;
-SSH) do_guac_ssh
+"SSH") do_guac_ssh
 ;;
-serial) do_guac_serial
+"serial") do_guac_serial
 ;;
 *)
 ;;
