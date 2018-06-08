@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash 
 
 ##############################################
 ##
@@ -19,6 +19,8 @@ DHCPCD_FILE="/etc/dhcpcd.conf"
 HOSTS_FILE="/etc/hosts"
 DNS_FILE="/etc/resolv.conf.dmz"
 INTERFACES_FILE="/etc/network/interfaces"
+DDNS_FILE="/etc/ddclient/ddclient/ddclient.conf"
+GUAC_NOAUTH_CONF="/etc/guacamole/noauth-config.xml"
 
 # Configure the keyboard
 do_configure_keyboard() {
@@ -101,7 +103,7 @@ do_set_eth0(){
    # echo "supersede domain-name-servers 8.8.8.8, 8.8.4.4;" >> $DHCPCD_FILE
    # echo "ipv4only" >> $DHCPCD_FILE
    #echo "interface eth0" >> $DHCPCD_FILE
-   #echo "static ip_address=192.168.0.1/24" >> $DHCPCD_FILE
+   #echo "static ip_address=192.168.7.1/24" >> $DHCPCD_FILE
    echo "auto lo" >> $INTERFACES_FILE
    echo "   iface lo inet loopback" >> $INTERFACES_FILE
    echo "" >> $INTERFACES_FILE
@@ -111,10 +113,10 @@ do_set_eth0(){
    echo "" >> $INTERFACES_FILE
    echo "auto eth0" >> $INTERFACES_FILE
    echo "iface eth0 inet static" >> $INTERFACES_FILE
-   echo "  address 192.168.0.1" >> $INTERFACES_FILE
+   echo "  address 192.168.7.1" >> $INTERFACES_FILE
    echo "  netmask 255.255.255.0" >> $INTERFACES_FILE
-   echo "  broadcast 192.168.0.255"  >> $INTERFACES_FILE
-   echo "  network 192.168.1.0" >> $INTERFACES_FILE
+   echo "  broadcast 192.168.7.255"  >> $INTERFACES_FILE
+   echo "  network 192.168.7.0" >> $INTERFACES_FILE
 
    # Exclude eth0 from DHCPCD_FILE
    echo "denyinterfaces eth0" >> $DHCPCD_FILE
@@ -358,17 +360,128 @@ do_install_dhcp_server() {
 
 do_configure_dhcp_server() {
    # Add the configuration for the instrumentation network
-   echo "subnet 192.168.0.0 netmask 255.255.255.0 {"  >> $DHCPD_FILE
-   echo "range 192.168.0.10 192.168.0.10;" >> $DHCPD_FILE
-   echo "option broadcast-address 192.168.0.255;" >> $DHCPD_FILE
+   echo "subnet 192.168.7.0 netmask 255.255.255.0 {"  >> $DHCPD_FILE
+   echo "range 192.168.7.10 192.168.0.10;" >> $DHCPD_FILE
+   echo "option broadcast-address 192.168.7.255;" >> $DHCPD_FILE
    echo "}" >> $DHCPD_FILE
    
    # Only start IPv4 server
    sed -i -e 's/v4=""/v4="eth0"/g' /etc/default/isc-dhcp-server
 }
 
+do_ddns_setup() {
+	echo "Installing Dynamic DNS client software . . ."
+	apt-get -y install ddclient
+}
+
+do_setup_firewall() {
+   apt-get -y -q install iptables-persistent	
+   echo "Setting up firewall configuration . . ."
+   if [-x /etc/firewall/iptables.sh]; then
+	echo "Firewall script already exists."
+   else
+cat <<EOF > /etc/firewall/iptables.sh
+#!/bin/bash
+
+#IPV4 RULES
+
+echo "Setting IPv4 rules..."
+
+# Default policy for Input and Output
+iptables -P OUTPUT  ACCEPT
+iptables -P INPUT  DROP
+
+# Allows all loopback (lo0) traffic and drop all traffic to 127/8 that doesn't use lo0
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT ! -i lo -d 127.0.0.0/8 -j REJECT
+
+# Accepts all established inbound connections
+iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allows HTTP and HTTPS connections from anywhere
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+# Allow SSH connections 
+iptables -A INPUT -p tcp -m state --state NEW --dport 22 -j ACCEPT
+
+# Allow DHCP Requests through
+iptables  -A  INPUT -i eth0 -p udp --dport 67:68 --sport 67:68 -j ACCEPT
+
+# Allow ping
+iptables -A INPUT -p icmp -m icmp --icmp-type 8 -j ACCEPT
+
+# log iptables denied calls (access via 'dmesg' command)
+iptables -A INPUT -m limit --limit 5/min -j LOG --log-prefix "iptables denied: " --log-level 7
+
+
+#IPV6 RULES
+
+echo "Setting IPv6 rules..."
+
+# Set up default policies
+ip6tables -P INPUT DROP
+ip6tables -P FORWARD DROP
+ip6tables -P OUTPUT ACCEPT
+
+# Allow localhost traffic.
+ip6tables -A INPUT -s ::1 -d ::1 -j ACCEPT
+
+# Allow some ICMPv6 types in the INPUT chain
+# Using ICMPv6 type names to be clear.
+ip6tables -A INPUT -p icmpv6 --icmpv6-type destination-unreachable -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type packet-too-big -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type time-exceeded -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type parameter-problem -j ACCEPT
+
+# Allow some other types in the INPUT chain, but rate limit.
+ip6tables -A INPUT -p icmpv6 --icmpv6-type echo-request -m limit --limit 900/min -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type echo-reply -m limit --limit 900/min -j ACCEPT
+
+# Allow others ICMPv6 types but only if the hop limit field is 255.
+ip6tables -A INPUT -p icmpv6 --icmpv6-type router-advertisement -m hl --hl-eq 255 -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type neighbor-solicitation -m hl --hl-eq 255 -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type neighbor-advertisement -m hl --hl-eq 255 -j ACCEPT
+ip6tables -A INPUT -p icmpv6 --icmpv6-type redirect -m hl --hl-eq 255 -j ACCEPT
+
+# When there isn't a match, the default policy (DROP) will be applied.
+# To be sure, drop all other ICMPv6 types.
+# We're dropping enough icmpv6 types to break RFC compliance.
+ip6tables -A INPUT -p icmpv6 -j LOG --log-prefix "Dropped ICMPv6"
+ip6tables -A INPUT -p icmpv6 -j DROP
+
+# Accepts all established inbound connections
+ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allows HTTP and HTTPS connections from anywhere
+ip6tables -A INPUT -p tcp --dport 80 -j ACCEPT
+ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+# Allow SSH connections 
+ip6tables -A INPUT -p tcp -m state --state NEW --dport 22 -j ACCEPT
+EOF
+	chmod 700 /etc/firewall/iptables.sh
+	chown root /etc/firewall/iptables.sh
+   fi
+}
+
+do_setup_perfsonar() {
+	clear
+	echo "Installing personar testpoint . . ."
+	if ![-x /etc/apt/sources.list.d/perfsonar-jessie-release.list]; then
+		wget -P /etc/apt/sources.list.d http://downloads.perfsonar.net/debian/perfsonar-jessie-release.list
+		apt-get update
+		wget -qO - http://downloads.perfsonar.net/debian/perfsonar-debian-official.gpg.key | apt-key add -
+	fi
+	
+	if [-x /etc/apt/sources.list.d/perfsonar-jessie-release.list]; then	
+		apt-get -y install --no-install-recommends perfsonar-testpoint
+		apt-get -y -q install perfsonar-toolkit-ntp perfsonar-toolkit-security perfsonar-toolkit-servicewatcher perfsonar-toolkit-sysctl perfsonar-toolkit-systemenv-testpoint
+	fi
+}
+
 do_install_guacamnole() {
-   # apt-get install software-properties-common python-software-properties
+   apt-get -y install software-properties-common
    # add-apt-repository ppa:guacamole/stable
    # apt-get update
    
@@ -378,34 +491,71 @@ do_install_guacamnole() {
    chkconfig tomcat6 on
    chkconfig guacd on
    
-   service tomcat6 start
-   service guacd start
+   # Configure Guacamole to us no-auth, rely on Apache for authentication
+   sed -i 's/auth-provider:.*/auth-provider: net.sourceforge.guacamole.net.auth.noauth.NoAuthenticationProvider/g' /etc/guacamole/guacamole.properties
+   sed -i 's/basic-user-mapping:.*//g'  /etc/guacamole/guacamole.properties
+   echo "noauth-config: /etc/guacamole/noauth-config.xml" >> /etc/guacamole/guacamole.properties
+      
+   # service guacd start
  
+}
+
+do_config_apache() {
+
 }
 
 do_guac_rdp (){
    echo "Configuring guacamole for RDP"
+	echo 'configs>'> $GUAC_NOAUTH_CONF
+	echo 'config name="Lab Device - RDP">' >> $GUAC_NOAUTH_CONF
+	echo '<protocol>rdp</protocol>' >> $GUAC_NOAUTH_CONF
+	echo '<param name="hostname">192.168.7.10</param>' >> $GUAC_NOAUTH_CONF
+	echo '<param name="port">3389</param>' >> $GUAC_NOAUTH_CONF
+	echo '<param name="enable-drive">true</param>' >> $GUAC_NOAUTH_CONF
+	echo '<param name="drive-path">/home/virtual_drive/</param>' >> $GUAC_NOAUTH_CONF
+	echo '<param name="create-drive-path">true</param>' >> $GUAC_NOAUTH_CONF
+	echo '</config>' >> $GUAC_NOAUTH_CONF
+	echo '</configs>' >> $GUAC_NOAUTH_CONF
 }
 
 do_guac_vnc (){
    echo "Configuring guacamole for VNC"
+
+	VNC_PASS=$(whiptail --title "Enter VNC Password" --passwordbox "VNC Password for lab equipment"  10 60 3>&1 1>&2 2>&3)
+	
+	echo '<configs>' > $GUAC_NOAUTH_CONF
+	echo '	<config name="Lab Device - VNC">' >> $GUAC_NOAUTH_CON
+	echo '		<protocol>vnc</protocol>' >> $GUAC_NOAUTH_CONF
+	echo '		<param name="hostname">192.168.7.10</param>' >> $GUAC_NOAUTH_CONF
+	echo '		<param name="port">5900</param>' >> $GUAC_NOAUTH_CONF
+	echo '		<param name="password">${VNC_PASS}</param>' >> $GUAC_NOAUTH_CONF
+	echo '	</config>' >> $GUAC_NOAUTH_CONF
+	echo '</configs>' >> $GUAC_NOAUTH_CONF
+
 }
 
 do_guac_ssh (){
    echo "Configuring guacamole for ssh"
-}
-
-do_guac_serial (){
-   echo "Configuring guacamole for serial connection"
-   echo "hahaha - not yet."
-}
-
-do_suth_setup_local() {
-   echo "Not yet written"
-}
-
-do_auth_setup_kerberos() {
-   echo "Not yet written"
+   
+   echo '<connection name="Lab Device - SSH">' > $GUAC_NOAUTH_CONF
+   echo '<protocol>ssh</protocol>' >> $GUAC_NOAUTH_CONF
+   echo '<param name="hostname">192.168.7.10</param>' >> $GUAC_NOAUTH_CONF
+   echo '<param name="port">22</param>' >> $GUAC_NOAUTH_CONF
+   
+   SSH_USERNAME = $(whiptail --title "SSH USername" --inputbox "Enter the SSH username" 10 60 3>&1 1>&2 2>&3)
+   echo '<param name="username">${SSH_USERNAME}</param>'  >> $GUAC_NOAUTH_CONF
+   
+   SSH_PASS = $(whiptail --title "SSH Password" --passwordbox "Enter the SSH username" 10 60 3>&1 1>&2 2>&3)
+   if [-z "$SSH_PASS" ]; then
+	echo '<param name="password">${SSH_PASS}</param>'  >> $GUAC_NOAUTH_CONF
+   else
+	SSH_KEY = $(whiptail --title "SSH Private Key" --inputbox "Enter the private key" 10 60 3>&1 1>&2 2>&3)
+	echo '<param name="private-key">${SSH_KEY}</param>'
+	SSH_PHRASE = $(whiptail --title "SSH Private Key Passphrase" --passwordbox "Enter the passphrase" 10 60 3>&1 1>&2 2>&3)
+	if [-z "$SSH_PHRASE" ]; then
+	 echo '<param name="passphrase">${SSH_PHRASE}</param>'
+	fi  
+   fi
 }
 
 do_auth_setup_shib() {
@@ -413,9 +563,5 @@ do_auth_setup_shib() {
 }
 
 do_auth_setup_cas() {
-   echo "Not yet written"
-}
-
-do_auth_setup_openid() {
    echo "Not yet written"
 }

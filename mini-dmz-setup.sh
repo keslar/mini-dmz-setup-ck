@@ -114,62 +114,65 @@ do_install_dhcp_server
 echo "Configuring the DHCP zone for the instrument . . ."
 do_configure_dhcp_server
 
+# Dynaic DNS 
+clear
+echo "Installing Dynamic DNS client . . ."
+if (whiptail --title "Dynamic DNS Setup" --yesno "Would you like to setup Dynamic DNS?" 20 60 2) then
+	do_ddns_setup
+fi
+
+# Personar
+clear
+echo "Installing perfsonar node . . ."
+if (whiptail --title "Install personar" --yesno "Would you like to install perfsonar test point on this device?" 20 70 5); then
+	do_setup_perfsonar
+fi
+
 # Install and configure Guacamole
 clear 
 echo "Installing Apache/Tomcat/Guacamole . . ."
 do_install_guacamnole
 
-# Setup authentication
-clear
-echo "Authentication setup would occur at this point."
-AUTH_CHOICE=$(whiptail --title "Authentication Setup" --radiolist \
-"What authentication mechanism would you like to use to control acess to this Mini-DMZ device?" 20 70 5 \
-# "local"    "Local PAM Access" off \
-# "kerberos" "kerberos" off \
-"SAML"     "SAML/Shibboleth" on \
-"CAS"      "Central Authenitcation Service (CAS)" off \
-# "openID"   "openID provider" off  \
-3>&1 1>&2 2>&3 )
-
-case $AUTH_CHOICE in
-"local")	do_suth_setup_local
-;;
-"kerberos") do_auth_setup_kerberos
-;;
-"SAML") do_auth_setup_shib
-;;
-"CAS") do_auth_setup_cas
-;;
-"openID") do_auth_setup_openid
-;;
-esac
-
-sleep 2
-
 # Configure Guacamole
 clear
 echo "Configuring Guacamole server . . ."
-GUAC_CONNECT_TYPE=$(whiptail --title "Connect to Instrument" --radiolist "How do you connect to the instrument:"  20 70 4 \
-"RDP" "Windows Remote Desktop" on \
-"VNC" "Virtual Network Computing (VNC)" off \
-"SSH" "ssh terminal" off \
-# "serial" "RS-232 Terminal" off \
-3>&1 1>&2 2>&3 )
+GUAC_CONNECT_TYPE=$(whiptail --title "Connect to Instrument" --menu "How do you connect to the instrument:"  20 70 3 \
+"RDP" "Windows Remote Desktop" \
+"VNC" "Virtual Network Computing (VNC)" \
+"SSH" "ssh terminal" 3>&1 1>&2 2>&3 )
 
 case $GUAC_CONNECT_TYPE in
-"RDP") do_guac_rdp
+"RDP")
+do_guac_rdp
 ;;
-"VNC") do_guac_vnc
+"VNC")
+do_guac_vnc
 ;;
-"SSH") do_guac_ssh
-;;
-"serial") do_guac_serial
+"SSH")
+do_guac_ssh
 ;;
 *)
 ;;
 esac
 
+# Setup authentication
+clear
+echo "Authentication setup would occur at this point."
+AUTH_CHOICE=$(whiptail --title "Authentication Setup" --menu \
+"What authentication mechanism would you like to use to control acess to this Mini-DMZ device?" 20 70 2 \
+"SAML"     "SAML/Shibboleth" \
+"CAS"      "Central Authenitcation Service (CAS)" 3>&1 1>&2 2>&3 )
+
+case $AUTH_CHOICE in
+"SAML")
+do_auth_setup_shib
+;;
+"CAS")
+do_auth_setup_cas
+;;
+esac
 
 # The end
 clear
 echo "de Fini!"
+reboot
